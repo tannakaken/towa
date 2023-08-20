@@ -14,15 +14,15 @@
 
 ## アーキテクチャ
 
-:::mermaid
-graph TB
-  Tokenizer(Tokenizer)-->Parser(Parser)
-  Parser-->CodeGenerator(Code Generator)
-  CodeGenerator-->VM(Virtual Machine)
-  VM-->BTree(B-Tree)
-  BTree-->Pager(Pager)
-  Pager-->OSInterface(OS Interface)
-:::
+```mermaid
+graph TB;
+    Tokenizer[Tokenizer]-->Parser[Parser];
+    Parser-->CodeGenerator[Code Generator];
+    CodeGenerator-->VM[Virtual Machine];
+    VM-->BTree[B-Tree];
+    BTree-->Pager[Pager];
+    Pager-->OSInterface[OS Interface];
+```
 
 ## 情報源
 
