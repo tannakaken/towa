@@ -71,7 +71,7 @@ describe 'database' do
 
   it 'prints an error message if id is negative' do
     result = run_script([
-      "insert -11 user1 person1@example.com",
+      "insert -1 user1 person1@example.com",
       "select",
       ".exit",
     ])
