@@ -61,6 +61,75 @@ typedef struct {
   uint32_t num_rows;
 } Table;
 
+typedef struct {
+  Table* table;
+  uint32_t row_num;
+  bool end_of_table; // Indicates a position one past the last element
+} Cursor;
+
+void* get_page(Pager* pager, uint32_t page_num) {
+  if (page_num > TABLE_MAX_ROWS) {
+    printf("Tried to fetch page number out of bounds. %d > %d\n", page_num, TABLE_MAX_ROWS);
+    exit(EXIT_FAILURE);
+  }
+
+  if (pager->pages[page_num] == NULL) {
+    // Cache miss. Allocate memory and load from file.
+    void* page = malloc(PAGE_SIZE); // ページサイズ用意する
+    uint32_t num_pages = pager->file_length / PAGE_SIZE; // いっぱいになるページの数
+
+    if (pager->file_length % PAGE_SIZE) { // あまりも含めて1ページ増やす
+      num_pages += 1;
+    }
+
+    if (page_num <= num_pages) { // ページ数がファイルの総ページ数以下だったら
+      lseek(pager->file_descriptor, page_num * PAGE_SIZE, SEEK_SET);
+      ssize_t bytes_read = read(pager->file_descriptor, page, PAGE_SIZE); // 読み込み
+      if (bytes_read == -1) {
+        printf("Error reading file: %d\n", errno);
+        exit(EXIT_FAILURE);
+      }
+    }
+
+    pager->pages[page_num] = page;
+  }
+  return pager->pages[page_num];
+}
+
+Cursor* table_start(Table* table) {
+  Cursor* cursor = malloc(sizeof(Cursor));
+  cursor->table = table;
+  cursor->row_num = 0;
+  cursor->end_of_table = (table->num_rows == 0);
+
+  return cursor;
+}
+
+void cursor_advande(Cursor* cursor) {
+  cursor->row_num += 1;
+  if (cursor->row_num >= cursor->table->num_rows) {
+    cursor->end_of_table = true;
+  }
+}
+
+Cursor* table_end(Table* table) {
+  Cursor* cursor = malloc(sizeof(Table));
+  cursor->table = table;
+  cursor->row_num = table->num_rows;
+  cursor->end_of_table = true;
+
+  return cursor;
+}
+
+void* cursor_value(Cursor* cursor) {
+  uint32_t row_num = cursor->row_num;
+  uint32_t page_num = row_num / ROWS_PER_PAGE;
+  void* page = get_page(cursor->table->pager, page_num);
+  uint32_t row_offset = row_num % ROWS_PER_PAGE;
+  uint32_t byte_offset = row_offset * ROW_SIZE;
+  return page + byte_offset;
+}
+
 void pager_flush(Pager* pager, uint32_t page_num, uint32_t size) {
   if (pager->pages[page_num] == NULL) {
     printf("Tried to flush null page\n");
@@ -232,44 +301,6 @@ PrepareResult prepare_statement(InputBuffer* input_buffer,
   return PREPARE_UNRECOGNIZED_STATEMENT;
 }
 
-
-void* get_page(Pager* pager, uint32_t page_num) {
-  if (page_num > TABLE_MAX_ROWS) {
-    printf("Tried to fetch page number out of bounds. %d > %d\n", page_num, TABLE_MAX_ROWS);
-    exit(EXIT_FAILURE);
-  }
-
-  if (pager->pages[page_num] == NULL) {
-    // Cache miss. Allocate memory and load from file.
-    void* page = malloc(PAGE_SIZE); // ページサイズ用意する
-    uint32_t num_pages = pager->file_length / PAGE_SIZE; // いっぱいになるページの数
-
-    if (pager->file_length % PAGE_SIZE) { // あまりも含めて1ページ増やす
-      num_pages += 1;
-    }
-
-    if (page_num <= num_pages) { // ページ数がファイルの総ページ数以下だったら
-      lseek(pager->file_descriptor, page_num * PAGE_SIZE, SEEK_SET);
-      ssize_t bytes_read = read(pager->file_descriptor, page, PAGE_SIZE); // 読み込み
-      if (bytes_read == -1) {
-        printf("Error reading file: %d\n", errno);
-        exit(EXIT_FAILURE);
-      }
-    }
-
-    pager->pages[page_num] = page;
-  }
-  return pager->pages[page_num];
-}
-
-void* row_slot(Table* table, uint32_t row_num) {
-  uint32_t page_num = row_num / ROWS_PER_PAGE;
-  void* page = get_page(table->pager, page_num);
-  uint32_t row_offset = row_num % ROWS_PER_PAGE;
-  uint32_t byte_offset = row_offset * ROW_SIZE;
-  return page + byte_offset;
-}
-
 typedef enum {
   EXECUTE_SUCCESS,
   EXECUTE_TABLE_FULL
@@ -281,7 +312,8 @@ ExecuteResult execute_insert(Statement* statement, Table* table) {
   }
 
   Row* row_to_insert = &(statement->row_to_insert);
-  serialize_row(row_to_insert, row_slot(table, table->num_rows));
+  Cursor* cursor = table_end(table);
+  serialize_row(row_to_insert, cursor_value(cursor));
   table->num_rows += 1;
   return EXECUTE_SUCCESS;
 }
@@ -291,10 +323,12 @@ void print_row(Row* row) {
 }
 
 ExecuteResult execute_select(Statement* statement, Table* table) {
+  Cursor* cursor = table_start(table);
   Row row;
-  for (uint32_t i = 0; i < table->num_rows; ++i) {
-    deserialize_row(row_slot(table, i), &row);
+  while (!(cursor->end_of_table)) {
+    deserialize_row(cursor_value(cursor), &row);
     print_row(&row);
+    cursor_advande(cursor);
   }
   return EXECUTE_SUCCESS;
 }
